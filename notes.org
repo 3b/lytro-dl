@@ -1,0 +1,45 @@
+* commands
+  from http://optics.miloush.net/lytro/TheProtocols.Commands.aspx
+  and local experiments
+** c2 00 00 = load hardware info
+   download =
+   0x0000	256	string	camera manufacturer, right padded with zeros
+   0x0100	128	string	camera serial number, right padded with zeros
+   0x0180	128	string	camera build ID, right padded with zeros
+   0x0200	128	string	camera software version, right padded with zeros
+   0x0280	4
+** c2 00 01 (0) = read file
+   payload = filename
+   response payload = filename if found
+   download = contents
+*** c2 00 01 (1) = send file?
+    (path on drive C = reset)
+*** c2 00 01 (3) = ?
+    crash on drive C, maybe delete?
+** c2 00 02 = list pictures
+   download = N x u32 ?
+   per image:
+   0x00	8	string	folder name postfix, right padded with zeros
+   0x08	8	string	file name prefix, right padded with zeros
+   0x10	4	int	folder number
+   0x14	4	int	file number
+   0x18	4
+   0x1C	4
+   0x20	4
+   0x24	4
+   0x28	4	int	liked, 1 if picture marked favorite, 0 otherwise
+   0x2C	4	float	last lambda (at which user focused image in camera)
+   0x30	48	string	picture id, right padded with zeros
+   0x60	24	string	date picture taken, ISO 8601 format
+   0x78	4
+   0x7C	4	int	binary encoded rotation, 6 = 270°, 3 = 180°, 8 = 90°, 1 = 0° (counter-clockwise)
+** c2 00 05 = load picture
+** c2 00 06 = load calibration data
+** c2 00 07 = load compressed raw picture?
+** c2 00 08 = download log files?
+** c4 00 = download content
+** c6 00 00 = get download size
+** c6 00 03 = get camera time
+** c6 00 06 = get battery level
+** c0 00 00 = take a picture
+** c0 00 04 = set time
