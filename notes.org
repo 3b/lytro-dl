@@ -1,6 +1,17 @@
+* references
+** Lytro Meltdown
+   http://optics.miloush.net/lytro/Default.aspx
+   http://optics.miloush.net/lytro/TheProtocols.Commands.aspx
+** ljirkovsky
+   https://ljirkovsky.wordpress.com/
+   https://ljirkovsky.wordpress.com/2015/03/16/lytro-protocol/
+** LyLi
+   https://bitbucket.org/stativ/lyli/
+** misc USB junk
+   http://www.usb.org/developers/docs/devclass_docs/usbmassbulk_10.pdf
+   https://bitbucket.org/stativ/libusbpp/
 * commands
-  from http://optics.miloush.net/lytro/TheProtocols.Commands.aspx
-  and local experiments
+  from "Lytro Meltdown" and local experiments
 ** c2 00 00 = load hardware info
    download =
    0x0000	256	string	camera manufacturer, right padded with zeros
