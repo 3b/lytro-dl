@@ -61,26 +61,9 @@
 (defmethod conserv.tcp:on-tcp-client-output-empty ((driver lytro-dl))
   (format t "client ~s got output empty~%" (name driver)))
 
+#++
 (defmethod conserv.tcp:on-tcp-client-connect ((driver lytro-dl))
   (format t "client ~s connected~%" (name driver)))
-
-
-(defun u32 (buffer offset)
-  (loop for i below 4
-        for octet = (aref buffer (+ offset i))
-        sum (ash octet (* i 8))))
-
-(defun u16 (buffer offset)
-  (loop for i below 2
-        for octet = (aref buffer (+ offset i))
-        sum (ash octet (* i 8))))
-
-(defun stringz (buffer offset size)
-  (babel:octets-to-string buffer
-                          :start offset
-                          :end (min (+ offset size)
-                                    (position 0 buffer
-                                              :start offset))))
 
 
 
@@ -240,18 +223,20 @@
     (loop for i from 15 below 28
           for p in parameters
           do (setf (aref s i) p))
-    (format t "send command ~4,'0x (~2,'0x) flags ~8,'0x parameters ~s length ~s~%" command subcommand flags parameters length)
+    (format t "~&send command ~4,'0x (~2,'0x) flags ~8,'0x parameters ~s length ~s~%" command subcommand flags parameters length)
     (write-sequence (print (coerce s '(vector (unsigned-byte 8)))) stream)
     (when payload
       (write-sequence (coerce payload '(vector (unsigned-byte 8))) stream :end length))))
 
 (defun gather (thunk count)
-  (let ((chunks nil))
+  (let ((chunks nil)
+        (total count))
     (lambda (data offset length)
       ;; fixme: if we are making copies and combining result at end,
       ;; just preallocate and copy into final buffer...
       (push (subseq data offset (+ offset length))
             chunks)
+      (format t "~&gather ~s/~s~%" count total)
       (when (zerop (decf count))
         (let ((b (apply 'concatenate '(vector (unsigned-byte 8))
                         (reverse chunks))))
@@ -273,7 +258,7 @@
     (setf *current-download* nil)
     (return-from process-command-data nil))
   (let ((dl-size (u32 data offset))
-        (chunk-size (expt 2 20)));; 1MB/chunk for now
+        (chunk-size (expt 2 12)));; 1MB/chunk for now
     (when (zerop dl-size)
       (format t "~& no data to download...~%")
       (when *close-stream*
@@ -282,16 +267,22 @@
       (setf *current-download* nil)
       (return-from process-command-data nil))
     (when (> dl-size chunk-size)
+      (format t "gather ~s/~s = ~s~%"
+              dl-size chunk-size (ceiling dl-size chunk-size))
       (setf *current-download*
             (gather *current-download*
                     (ceiling dl-size chunk-size))))
     (loop for i below dl-size by chunk-size
-          do (send-command conserv.tcp:*tcp-client*
-                           #xc4 0 :flags 1 :length chunk-size
-                                  :parameters (list (ldb (byte 8 0) i)
-                                                    (ldb (byte 8 8) i)
-                                                    (ldb (byte 8 16) i)
-                                                    (ldb (byte 8 24) i))))))
+          do (format t "~&dl chunk ~s/~s @ ~s (-> ~s)~%"
+                     (min chunk-size (- dl-size i)) dl-size
+                     i (+ i (min chunk-size (- dl-size i))))
+             (send-command conserv.tcp:*tcp-client*
+                              #xc4 0 :flags 1
+                              :length (min chunk-size (- dl-size i))
+                              :parameters (list (ldb (byte 8 0) i)
+                                                (ldb (byte 8 8) i)
+                                                (ldb (byte 8 16) i)
+                                                (ldb (byte 8 24) i))))))
 
 (defun download-response (stream)
   ;; send command
@@ -315,9 +306,10 @@
   (download-response *control*))
 
 
-(defun run-event-loop ()
-  (setf *thunk* nil)
-  (sb-concurrency:receive-pending-messages *worklist*)
+(defun run-event-loop (&key (clear t))
+  (when clear
+    (setf *thunk* nil)
+    (sb-concurrency:receive-pending-messages *worklist*))
 
   (conserv:with-event-loop ()
     (let* ((control-client (make-instance 'lytro-dl :name "control"))
@@ -357,27 +349,6 @@
     (setf *current-download* nil)))
 
 
-(defun decode-picture-list (data offset length thunk &optional header-thunk)
-  (let ((end (+ offset length)))
-    (symbol-macrolet ((u32 (prog1 (u32 data offset) (incf offset 4)))
-                      (f32 (prog1 (ieee-floats:decode-float32 (u32 data offset))
-                             (incf offset 4)))
-                      (u16 (prog1 (u16 data offset) (incf offset 2)))
-                      (u8 (prog1 (aref data offset) (incf offset 1)))
-                      (s8 (prog1 (stringz data offset 8) (incf offset 8)))
-                      (s24 (prog1 (stringz data offset 24) (incf offset 24)))
-                      (s48 (prog1 (stringz data offset 48) (incf offset 48))))
-      (funcall (or header-thunk #'identity)
-               (loop repeat 23 collect u32))
-      (loop while (< offset end)
-            do (funcall thunk
-                        (list :folder-suffix s8 :file-prefix s8
-                              :folder-number u32 :file-number u32
-                              :?1 u32 :?2 u32 :?3 u32 :?4 u32
-                              :liked u32 :last-lambda f32
-                              :picture-id s48 :picture-date s24
-                              :?5 u32 :rotation u32))))))
-
 (defmethod download-chunk ((stream (eql :#xc20002)) data offset length)
   ;; 'list pictures' download data
   (format t "got picture list packet: ~%")
@@ -406,11 +377,6 @@
       *thunk*)
 
 (setf *current-download* nil)
-
-(defun cstring (string)
-  (let ((o (babel:string-to-octets string)))
-    (concatenate '(vector (unsigned-byte 8)) o (list 0))))
-
 #++
 (defparameter *dump* (open "/tmp/dump.jpg" :direction :output :element-type '(unsigned-byte 8)))
 #++
@@ -454,8 +420,8 @@
                                  (setf *current-download* :text)
                                  (send-command *control* #xc2 1
                                                :payload
-                                               #++(cstring "c:\\t1calib\\mlacalibration.txt")
-                                               (cstring "i:/3b.3b"))
+                                               (cstring "c:\\t1calib\\mlacalibration.txt")
+                                               #++(cstring "i:/3b.3b"))
                                  (download-response *control*)
                                  ))
 
@@ -463,8 +429,19 @@
   #++
   (sb-concurrency:send-message *worklist*
                                (lambda ()
-                                 (setf *current-download* *dump*)
+                                 (setf *current-download* :text ;*dump*
+                                       )
                                  (send-command *control* #xc2 8)
+                                 (download-response *control*)
+                                 ))
+
+  ;; download content
+  #++
+  (sb-concurrency:send-message *worklist*
+                               (lambda ()
+                                 (setf *current-download* :text ;*dump*
+                                       )
+                                 (send-command *control* #xc4 0)
                                  (download-response *control*)
                                  ))
   #++
@@ -504,11 +481,6 @@
   (push (lambda ()
           (conserv.tcp::exit-event-loop :delay 1))
        *thunk*))
-
-(defparameter *lytro-dir* #P"~/lytro/")
-(defparameter *current-camera* nil)
-(defparameter *camera-dir* nil)
-(defparameter *new-pictures* nil)
 
 (defun run-download (&optional (*lytro-dir* *lytro-dir*))
   (sb-concurrency:receive-pending-messages *worklist*)
@@ -611,7 +583,7 @@
   )
 
 #++
-(close *close-stream*)
+(when *close-stream* (close *close-stream*) (setf *close-stream* nil))
 #++
 (setf *current-download* nil)
 
@@ -627,3 +599,14 @@
   (push (lambda ()
           (conserv.tcp::exit-event-loop :delay 1))
        *thunk*))
+
+(run-event-loop :clear nil)
+
+(format t "~{~2,'0x ~}" (coerce (car *partial-packet* )'list))
+AF 55 AA FA
+13 CD 0A 00
+03 00 00 00
+#xacd13 707859
+C4 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 NIL
+(map 'string 'code-char (car *partial-packet*))
+(* 5 4096)
